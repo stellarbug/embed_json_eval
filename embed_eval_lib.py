@@ -14,7 +14,7 @@ MODEL_PRESETS = {
     "biogpt":  ("microsoft/biogpt",                  "mean"),
 }
 
-DEFAULT_MODEL = "ncbi/MedCPT-Query-Encoder"
+DEFAULT_MODEL = "microsoft/biogpt"
 DEFAULT_LIST_KEYS = {"steps", "reagents", "materials", "equipment", "buffers"}
 
 NA_STRINGS = {
@@ -551,7 +551,7 @@ def print_summary(model_name, res):
     print(f"Values cosine:        {res['values_cosine']:.4f}")
 
 
-def score(gt_path, pred_path, preset="medcpt", report_out="report.md"):
+def score(gt_path, pred_path, preset="biogpt", report_out="report.md"):
     device = pick_device()
     hf_id, pooling = MODEL_PRESETS[preset]
     tok, mdl = load_encoder(hf_id, device)
@@ -576,4 +576,262 @@ def score(gt_path, pred_path, preset="medcpt", report_out="report.md"):
     )
 
     print_summary(hf_id, res)
+    return res
+
+
+
+# ---------------------------------------------------------------------------
+# Text block comparison
+# ---------------------------------------------------------------------------
+ 
+COMPARE_BLOCKS = ("A1", "A2", "B")
+ 
+ 
+def parse_blocks(path):
+    blocks = {}
+    current = None
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            if line in ("O", "A1", "A2", "B"):
+                current = line
+                blocks[current] = []
+            elif current is not None:
+                blocks[current].append(line)
+    return blocks
+ 
+ 
+BOOL_MODES = ("all", "top", "none")
+ 
+ 
+def _strip_booleans_at_depth(text, target_depth):
+    tokens = re.findall(r'\(|\)|[^\s()]+', text)
+    result = []
+    depth = 0
+    for tok in tokens:
+        if tok == '(':
+            result.append(tok)
+            depth += 1
+        elif tok == ')':
+            depth -= 1
+            result.append(tok)
+        elif tok in ('AND', 'OR', 'NOT') and depth == target_depth:
+            pass
+        else:
+            result.append(tok)
+    return ' '.join(result)
+ 
+ 
+def clean_clause(text, bool_mode="top"):
+    text = re.sub(r'\[[^\]]*\]', '', text)   # always strip [...] annotations
+    text = re.sub(r'"', '', text)             # always strip quotes
+ 
+    if bool_mode == "all":
+        text = re.sub(r'\b(AND|OR|NOT)\b', '', text)
+    elif bool_mode == "top":
+        text = _strip_booleans_at_depth(text, target_depth=0)
+ 
+    text = re.sub(r'[()]', '', text)          # always collapse parens
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+ 
+ 
+def parse_clauses(lines, bool_mode="top"):
+    text = re.sub(r'\s+', ' ', ' '.join(lines)).strip()
+    tokens = re.findall(r'\(|\)|[^\s()]+', text)
+ 
+    clauses = []
+    buf = []
+    depth = 0
+ 
+    for tok in tokens:
+        if tok == '(':
+            depth += 1
+            buf.append(tok)
+        elif tok == ')':
+            depth -= 1
+            buf.append(tok)
+        elif tok == 'OR' and depth == 0:
+            clause = clean_clause(' '.join(buf), bool_mode)
+            if clause:
+                clauses.append(clause)
+            buf = []
+        else:
+            buf.append(tok)
+ 
+    if buf:
+        clause = clean_clause(' '.join(buf), bool_mode)
+        if clause:
+            clauses.append(clause)
+ 
+    return clauses
+ 
+ 
+def block_stats(rows):
+    perfect    = sum(1 for _, _, s in rows if s >= 0.9999)
+    fails      = sum(1 for a, b, s in rows if s < 0.0001 and a != "<UNMATCHED>" and b != "<UNMATCHED>")
+    unmatched  = sum(1 for a, b, _ in rows if a == "<UNMATCHED>" or b == "<UNMATCHED>")
+    matched    = len(rows) - unmatched
+    scores     = [s for a, b, s in rows if a != "<UNMATCHED>" and b != "<UNMATCHED>"]
+    mean_score = float(np.mean(scores)) if scores else 0.0
+    return {
+        "total":      len(rows),
+        "matched":    matched,
+        "unmatched":  unmatched,
+        "perfect":    perfect,
+        "fails":      fails,
+        "mean_score": mean_score,
+    }
+ 
+ 
+def plot_block_stats(res, out_path):
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("matplotlib not installed, skipping plot.")
+        return
+ 
+    blocks = list(res["blocks"].keys())
+    stats  = {b: block_stats(res["blocks"][b]["rows"]) for b in blocks}
+ 
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+ 
+    # Bar chart: matched / unmatched / perfect / fails per block
+    x      = np.arange(len(blocks))
+    width  = 0.2
+    ax     = axes[0]
+    ax.bar(x - 1.5*width, [stats[b]["matched"]   for b in blocks], width, label="matched")
+    ax.bar(x - 0.5*width, [stats[b]["unmatched"] for b in blocks], width, label="unmatched")
+    ax.bar(x + 0.5*width, [stats[b]["perfect"]   for b in blocks], width, label="perfect (≥0.99)")
+    ax.bar(x + 1.5*width, [stats[b]["fails"]     for b in blocks], width, label="zero score")
+    ax.set_xticks(x)
+    ax.set_xticklabels(blocks)
+    ax.set_ylabel("clause count")
+    ax.set_title("Match breakdown per block")
+    ax.legend()
+ 
+    # Histogram: score distribution across all blocks
+    ax2 = axes[1]
+    for b in blocks:
+        scores = [s for a, bv, s in res["blocks"][b]["rows"]
+                  if a != "<UNMATCHED>" and bv != "<UNMATCHED>"]
+        if scores:
+            ax2.hist(scores, bins=20, alpha=0.6, label=b)
+    ax2.set_xlabel("similarity score")
+    ax2.set_ylabel("count")
+    ax2.set_title("Score distribution per block")
+    ax2.legend()
+ 
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    print(f"Plot saved to {out_path}")
+ 
+ 
+def compare_blocks(path_a, path_b, tok, mdl, device,
+                   batch_size=32, max_length=128, pooling="cls", bool_mode="top"):
+    blocks_a = parse_blocks(path_a)
+    blocks_b = parse_blocks(path_b)
+ 
+    missing_a = [b for b in COMPARE_BLOCKS if b not in blocks_a]
+    missing_b = [b for b in COMPARE_BLOCKS if b not in blocks_b]
+ 
+    results = {}
+    scores  = []
+ 
+    for block in COMPARE_BLOCKS:
+        clauses_a = parse_clauses(blocks_a.get(block, []), bool_mode)
+        clauses_b = parse_clauses(blocks_b.get(block, []), bool_mode)
+ 
+        clause_score, rows = match_and_score(
+            clauses_a, clauses_b, tok, mdl, device, batch_size, max_length, pooling)
+ 
+        cosine = mean_cosine(
+            clauses_a, clauses_b, tok, mdl, device, batch_size, max_length, pooling)
+ 
+        results[block] = {
+            "line_score": clause_score,
+            "cosine":     cosine,
+            "rows":       rows,
+            "stats":      block_stats(rows),
+        }
+        scores.append(clause_score)
+ 
+    overall = float(np.mean(scores)) if scores else 0.0
+    return {
+        "overall":   overall,
+        "blocks":    results,
+        "missing_a": missing_a,
+        "missing_b": missing_b,
+    }
+ 
+ 
+def print_block_scores(res, path_a, path_b):
+    if res["missing_a"]:
+        print(f"WARNING: {path_a} is missing blocks: {', '.join(res['missing_a'])}")
+    if res["missing_b"]:
+        print(f"WARNING: {path_b} is missing blocks: {', '.join(res['missing_b'])}")
+    if not res["missing_a"] and not res["missing_b"]:
+        print("All blocks found in both files.")
+ 
+    print(f"\nOverall: {res['overall']:.4f}")
+    for block, data in res["blocks"].items():
+        st = data["stats"]
+        print(f"  {block}  score: {data['line_score']:.4f}  cosine: {data['cosine']:.4f}"
+              f"  |  clauses: {st['total']}  matched: {st['matched']}"
+              f"  unmatched: {st['unmatched']}  perfect: {st['perfect']}  zero: {st['fails']}")
+ 
+ 
+def write_block_log(res, path, path_a="", path_b="", model_name="", pooling="", device=""):
+    def md_escape(x):
+        return str(x).replace("|", r"\|").replace("\n", "<br>")
+ 
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("# Text Block Comparison Report\n\n")
+        if path_a:
+            f.write(f"- File A: `{path_a}`\n")
+        if path_b:
+            f.write(f"- File B: `{path_b}`\n")
+        if model_name:
+            f.write(f"- Model: `{model_name}`\n")
+        if pooling:
+            f.write(f"- Pooling: `{pooling}`\n")
+        if device:
+            f.write(f"- Device: `{device}`\n")
+        f.write("\n")
+ 
+        missing_a = res.get("missing_a", [])
+        missing_b = res.get("missing_b", [])
+        if missing_a:
+            f.write(f"**WARNING:** File A is missing blocks: {', '.join(missing_a)}\n\n")
+        if missing_b:
+            f.write(f"**WARNING:** File B is missing blocks: {', '.join(missing_b)}\n\n")
+ 
+        f.write(f"**Overall score:** {res['overall']:.4f}\n\n")
+        for block, data in res["blocks"].items():
+            st = data["stats"]
+            f.write(f"**{block}** — score: {data['line_score']:.4f} | cosine: {data['cosine']:.4f}"
+                    f" | clauses: {st['total']} | matched: {st['matched']}"
+                    f" | unmatched: {st['unmatched']} | perfect: {st['perfect']} | zero: {st['fails']}\n\n")
+ 
+        for block, data in res["blocks"].items():
+            f.write(f"\n## Block {block}\n\n")
+            f.write(f"| File A | File B | score |\n|---|---|---:|\n")
+            for a, b, s in sorted(data["rows"], key=lambda x: x[2]):
+                f.write(f"| {md_escape(a)} | {md_escape(b)} | {s:.4f} |\n")
+ 
+ 
+def score_text(path_a, path_b, preset="biogpt", log_out="block_report.md", plot_out="block_report.png", bool_mode="top"):
+    device = pick_device()
+    hf_id, pooling = MODEL_PRESETS[preset]
+    tok, mdl = load_encoder(hf_id, device)
+ 
+    res = compare_blocks(path_a, path_b, tok, mdl, device, pooling=pooling, bool_mode=bool_mode)
+    print_block_scores(res, path_a, path_b)
+    write_block_log(res, log_out, path_a=path_a, path_b=path_b,
+                    model_name=hf_id, pooling=pooling, device=device)
+    plot_block_stats(res, plot_out)
+    print(f"\nDetailed log written to {log_out}")
     return res

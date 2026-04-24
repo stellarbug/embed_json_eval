@@ -1,0 +1,126 @@
+O
+
+"english"[Language] 
+NOT "meta-analysis"[Publication Type] 
+NOT "review"[Publication Type] 
+NOT "retracted publication"[Publication Type] 
+NOT "retraction of publication"[Publication Type] 
+NOT "published erratum"[Publication Type] 
+NOT "controlled clinical trial"[Publication Type] 
+NOT "clinical study"[Publication Type] 
+NOT "clinical trial"[Publication Type] 
+NOT "clinical trial protocol"[Publication Type] 
+NOT "clinical trial, phase i"[Publication Type] 
+NOT "clinical trial, phase ii"[Publication Type] 
+NOT "clinical trial, phase iii"[Publication Type] 
+NOT "clinical trial, phase iv"[Publication Type] 
+NOT "clinical trial, veterinary"[Publication Type]
+
+A1
+"nucleoproteins"[MeSH Terms] 
+OR "protein interaction mapping"[MeSH Terms] OR (("nucleoprotein"[All Fields] 
+OR "nucleoproteins"[All Fields] 
+OR "multiprotein"[All Fields] 
+OR "multiproteins"[All Fields] 
+OR "proteins"[MeSH Terms] 
+OR "protein"[All Fields] 
+OR "proteins"[All Fields] 
+OR "enzyme"[All Fields]) 
+AND 
+("interact"[All Fields] 
+OR "interacted"[All Fields] 
+OR "interacting"[All Fields] 
+OR "interaction"[All Fields] 
+OR "interactions"[All Fields] 
+OR "interactivity"[All Fields] 
+OR "interacts"[All Fields]) ) OR "protein interaction"[All Fields] 
+OR "protein interactions"[All Fields] 
+OR "interacting protein"[All Fields] 
+OR "interacting proteins"[All Fields]  OR "multiprotein complexes"[MeSH Terms]  OR 
+(
+("nucleoprotein"[All Fields] 
+OR "nucleoproteins"[All Fields] 
+OR "multiprotein"[All Fields] 
+OR "multiproteins"[All Fields] 
+OR "proteins"[MeSH Terms] 
+OR "protein"[All Fields] 
+OR "proteins"[All Fields] 
+OR "enzyme"[All Fields]) 
+AND 
+("complex"[All Fields] 
+OR "complexes"[All Fields] 
+OR "heteromer"[All Fields] 
+OR "heteromers"[All Fields] 
+OR "homomer"[All Fields] 
+OR "homomers"[All Fields] 
+OR "heteromeric"[All Fields] 
+OR "homomeric"[All Fields] 
+OR "subunit"[All Fields] 
+OR "subunits"[All Fields])
+) OR  "protein complex"[All Fields] 
+OR "protein complexes"[All Fields] OR ( "protein”[All Fields] 
+AND ("RNA”[All Fields]” 
+OR "DNA”[All Fields]” 
+OR "ribonucleic”[All Fields] 
+OR "deoxyribonucleic”[All Fields]) 
+AND ("interaction”[All Fields] 
+OR "interactions”[All Fields] ))
+
+A2
+ "Immunoprecipitation"[Mesh] 
+OR coimmunoprecipitation 
+OR (
+	"co”[All Fields] 
+	AND "immunoprecipitation"[All Fields]
+	) 
+OR (
+	"RNA” [All Fields] 
+	AND "immunoprecipitation" [All Fields]
+	) 
+OR "co immunoprecipitation"[All Fields] 
+OR "coIP"[All Fields] OR "Chromatography, Affinity"[Mesh] OR "affinity purification”[All Fields] 
+OR "affinity isolation”[All Fields] 
+OR "affinity chromatography”[All Fields] 
+OR (
+	"affinity”[All Fields] 
+	AND (
+		"purification”[All Fields] 
+		OR "isolation”[All Fields] 
+		OR "chromatography”[All Fields]
+		)
+	) 
+OR pulldown 
+OR (
+	"pull”[All Fields] 
+	AND (
+		"down”[All Fields] 
+		OR "downs”[All Fields]
+		)
+	)
+OR
+"crystallography, x ray"[MeSH Terms]
+OR "Nuclear Magnetic Resonance, Biomolecular” [MeSH Terms]
+OR "Cryoelectron Microscopy” [MeSH Terms]
+OR "Protein Array Analysis"[MeSH Terms]
+OR "electrophoretic mobility shift assay"[MeSH Terms] 
+OR "Surface Plasmon Resonance"[MeSH Terms]  
+
+  
+B
+ "Epitope Mapping"[MeSH Terms] 
+OR "Precipitin Tests"[MeSH Terms] 
+OR "Two-Hybrid System Techniques"[MeSH Terms] 
+OR "blotting, far western"[MeSH Terms] 
+OR "Radioimmunoprecipitation Assay"[MeSH Terms] 
+OR "Autoantibodies"[MeSH Terms] 
+OR "Chromatin Immunoprecipitation"[MeSH Terms] 
+OR "Cross-Linking Reagents"[MeSH Terms] 
+OR "Formaldehyde"[MeSH Terms] 
+OR "Microscopy” [MeSH Terms] 
+OR (crosslink AND reagent) 
+OR "Formaldehyde”[All Fields] OR "DNA Footprinting"[Mesh] 
+OR "Nuclease Protection Assays"[Mesh]  
+OR "Blotting, Southwestern”[Mesh] 
+OR "Fluorescence Resonance Energy Transfer”[Mesh] 
+OR "PAR CLIP”[All Fields]
+OR "AlphaFold” [All Fields] 
