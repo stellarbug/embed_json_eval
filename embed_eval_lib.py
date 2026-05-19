@@ -45,10 +45,9 @@ def load_encoder(model_name, device):
 def embed_texts(texts, tok, mdl, device, batch_size=32, max_length=128, pooling="cls"):
     if not texts:
         return np.zeros((0, 1), dtype=np.float32)
-
     all_embs = []
     for start in range(0, len(texts), batch_size):
-        batch = texts[start : start + batch_size]
+        batch = texts[start: start + batch_size]
         enc = tok(batch, truncation=True, padding=True, max_length=max_length, return_tensors="pt")
         enc = {k: v.to(device) for k, v in enc.items()}
         hs = mdl(**enc).last_hidden_state
@@ -88,7 +87,6 @@ def match_and_score(gt_items, pr_items, tok, mdl, device, batch_size, max_length
         rows = [(g, "<UNMATCHED>", 0.0) for g in gt_items] + \
                [("<UNMATCHED>", p, 0.0) for p in pr_items]
         return 0.0, rows
-
     A = embed_texts(gt_items, tok, mdl, device, batch_size, max_length, pooling)
     B = embed_texts(pr_items, tok, mdl, device, batch_size, max_length, pooling)
     pairs = best_match(A @ B.T)
@@ -558,7 +556,6 @@ def score(gt_path, pred_path, preset="biogpt", report_out="report.md"):
 
     gt_json = read_json(gt_path)
     pr_json = read_json(pred_path)
-
     res = compare_json(gt_json, pr_json, tok, mdl, device=device, pooling=pooling)
 
     structure_score, structure_rows = build_structure_table(
@@ -625,9 +622,9 @@ def _strip_booleans_at_depth(text, target_depth):
  
  
 def clean_clause(text, bool_mode="top"):
-    text = re.sub(r'\[[^\]]*\]', '', text)   # always strip [...] annotations
-    text = re.sub(r'"', '', text)             # always strip quotes
- 
+    text = re.sub(r'["\']', '', text)
+    text = re.sub(r'\[[^\]]*\]', '', text)
+
     if bool_mode == "all":
         text = re.sub(r'\b(AND|OR|NOT)\b', '', text)
     elif bool_mode == "top":
@@ -669,6 +666,35 @@ def parse_clauses(lines, bool_mode="top"):
     return clauses
  
  
+def euclid_norm(dist):
+    return 1.0 / (1.0 + dist)
+
+def euclid_from_cosine(cosine_score):
+    dist = float(np.sqrt(max(0.0, 2.0 * (1.0 - cosine_score))))
+    return euclid_norm(dist)
+
+def mean_euclidean(texts_a, texts_b, tok, mdl, device, batch_size, max_length, pooling):
+    if not texts_a and not texts_b:
+        return 1.0
+    if not texts_a or not texts_b:
+        return 0.0
+    A = embed_texts(texts_a, tok, mdl, device, batch_size, max_length, pooling)
+    B = embed_texts(texts_b, tok, mdl, device, batch_size, max_length, pooling)
+    dist = float(np.linalg.norm(A.mean(axis=0) - B.mean(axis=0)))
+    return euclid_norm(dist)
+
+def _build_pairs_dict(rows):
+    pairs, seen = {}, {}
+    for a, b, s in rows:
+        key = a
+        if key in seen:
+            seen[key] += 1
+            key = f"{a} [{seen[a]}]"
+        else:
+            seen[a] = 0
+        pairs[key] = [b, round(s, 6), round(euclid_from_cosine(s), 6)]
+    return pairs
+
 def block_stats(rows):
     perfect    = sum(1 for _, _, s in rows if s >= 0.9999)
     fails      = sum(1 for a, b, s in rows if s < 0.0001 and a != "<UNMATCHED>" and b != "<UNMATCHED>")
@@ -693,15 +719,13 @@ def plot_block_stats(res, out_path):
         print("matplotlib not installed, skipping plot.")
         return
  
-    blocks = list(res["blocks"].keys())
-    stats  = {b: block_stats(res["blocks"][b]["rows"]) for b in blocks}
- 
+    blocks = [b for b in res if b != "_meta"]
+    stats  = {b: res[b]["stats"] for b in blocks}
+
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
- 
-    # Bar chart: matched / unmatched / perfect / fails per block
-    x      = np.arange(len(blocks))
-    width  = 0.2
-    ax     = axes[0]
+
+    x, width = np.arange(len(blocks)), 0.2
+    ax = axes[0]
     ax.bar(x - 1.5*width, [stats[b]["matched"]   for b in blocks], width, label="matched")
     ax.bar(x - 0.5*width, [stats[b]["unmatched"] for b in blocks], width, label="unmatched")
     ax.bar(x + 0.5*width, [stats[b]["perfect"]   for b in blocks], width, label="perfect (≥0.99)")
@@ -711,11 +735,10 @@ def plot_block_stats(res, out_path):
     ax.set_ylabel("clause count")
     ax.set_title("Match breakdown per block")
     ax.legend()
- 
-    # Histogram: score distribution across all blocks
+
     ax2 = axes[1]
     for b in blocks:
-        scores = [s for a, bv, s in res["blocks"][b]["rows"]
+        scores = [s for a, bv, s in res[b]["rows"]
                   if a != "<UNMATCHED>" and bv != "<UNMATCHED>"]
         if scores:
             ax2.hist(scores, bins=20, alpha=0.6, label=b)
@@ -734,95 +757,127 @@ def compare_blocks(path_a, path_b, tok, mdl, device,
                    batch_size=32, max_length=128, pooling="cls", bool_mode="top"):
     blocks_a = parse_blocks(path_a)
     blocks_b = parse_blocks(path_b)
- 
+
     missing_a = [b for b in COMPARE_BLOCKS if b not in blocks_a]
     missing_b = [b for b in COMPARE_BLOCKS if b not in blocks_b]
- 
-    results = {}
-    scores  = []
- 
+
+    res, scores = {}, []
+
     for block in COMPARE_BLOCKS:
         clauses_a = parse_clauses(blocks_a.get(block, []), bool_mode)
         clauses_b = parse_clauses(blocks_b.get(block, []), bool_mode)
- 
+
         clause_score, rows = match_and_score(
             clauses_a, clauses_b, tok, mdl, device, batch_size, max_length, pooling)
- 
-        cosine = mean_cosine(
+
+        cosine_block = mean_cosine(
             clauses_a, clauses_b, tok, mdl, device, batch_size, max_length, pooling)
- 
-        results[block] = {
-            "line_score": clause_score,
-            "cosine":     cosine,
-            "rows":       rows,
-            "stats":      block_stats(rows),
+        euclid_block = mean_euclidean(
+            clauses_a, clauses_b, tok, mdl, device, batch_size, max_length, pooling)
+        euclid_match = float(np.mean([euclid_from_cosine(s) for _, _, s in rows])) if rows else 0.0
+
+        res[block] = {
+            "pairs":         _build_pairs_dict(rows),
+            "rows":          rows,
+            "clauses_a":     clauses_a,
+            "clauses_b":     clauses_b,
+            "clause_cosine_score":    clause_score,
+            "clause_euclid_score":  euclid_match,
+            "block_cosine_score":        cosine_block,
+            "block_euclid_score": euclid_block,
+            "stats":         block_stats(rows),
         }
         scores.append(clause_score)
- 
-    overall = float(np.mean(scores)) if scores else 0.0
-    return {
-        "overall":   overall,
-        "blocks":    results,
-        "missing_a": missing_a,
-        "missing_b": missing_b,
+
+    overall        = float(np.mean(scores)) if scores else 0.0
+    overall_euclid = float(np.mean([res[b]["clause_euclid_score"] for b in COMPARE_BLOCKS if b in res]))
+
+    res["_meta"] = {
+        "overall":        overall,
+        "overall_euclid": overall_euclid,
+        "missing_a":      missing_a,
+        "missing_b":      missing_b,
     }
- 
+    return res
  
 def print_block_scores(res, path_a, path_b):
-    if res["missing_a"]:
-        print(f"WARNING: {path_a} is missing blocks: {', '.join(res['missing_a'])}")
-    if res["missing_b"]:
-        print(f"WARNING: {path_b} is missing blocks: {', '.join(res['missing_b'])}")
-    if not res["missing_a"] and not res["missing_b"]:
+    meta = res["_meta"]
+    if meta["missing_a"]:
+        print(f"WARNING: {path_a} is missing blocks: {', '.join(meta['missing_a'])}")
+    if meta["missing_b"]:
+        print(f"WARNING: {path_b} is missing blocks: {', '.join(meta['missing_b'])}")
+    if not meta["missing_a"] and not meta["missing_b"]:
         print("All blocks found in both files.")
+
+    print(f"\nOverall cosine score:    {meta['overall']:.4f}")
+    print(f"Overall euclidean score: {meta['overall_euclid']:.4f}")
+    print()
+    for block in COMPARE_BLOCKS:
+        if block not in res:
+            continue
+        d, st = res[block], res[block]["stats"]
+        print(f"  {block}  match_cosine: {d['clause_cosine_score']:.4f}  match_euclid: {d['clause_euclid_score']:.4f}"
+              f"  block_cosine: {d['block_cosine_score']:.4f}  block_euclid: {d['block_euclid_score']:.4f}"
+              f"  |  clauses A: {len(d['clauses_a'])}  B: {len(d['clauses_b'])}"
+              f"  matched: {st['matched']}  unmatched: {st['unmatched']}"
+              f"  perfect: {st['perfect']}  zero: {st['fails']}")
  
-    print(f"\nOverall: {res['overall']:.4f}")
-    for block, data in res["blocks"].items():
-        st = data["stats"]
-        print(f"  {block}  score: {data['line_score']:.4f}  cosine: {data['cosine']:.4f}"
-              f"  |  clauses: {st['total']}  matched: {st['matched']}"
-              f"  unmatched: {st['unmatched']}  perfect: {st['perfect']}  zero: {st['fails']}")
- 
- 
+
 def write_block_log(res, path, path_a="", path_b="", model_name="", pooling="", device=""):
     def md_escape(x):
         return str(x).replace("|", r"\|").replace("\n", "<br>")
- 
+
+    meta = res["_meta"]
+
     with open(path, "w", encoding="utf-8") as f:
         f.write("# Text Block Comparison Report\n\n")
-        if path_a:
-            f.write(f"- File A: `{path_a}`\n")
-        if path_b:
-            f.write(f"- File B: `{path_b}`\n")
-        if model_name:
-            f.write(f"- Model: `{model_name}`\n")
-        if pooling:
-            f.write(f"- Pooling: `{pooling}`\n")
-        if device:
-            f.write(f"- Device: `{device}`\n")
+        if path_a:     f.write(f"- File A: `{path_a}`\n")
+        if path_b:     f.write(f"- File B: `{path_b}`\n")
+        if model_name: f.write(f"- Model: `{model_name}`\n")
+        if pooling:    f.write(f"- Pooling: `{pooling}`\n")
+        if device:     f.write(f"- Device: `{device}`\n")
         f.write("\n")
- 
-        missing_a = res.get("missing_a", [])
-        missing_b = res.get("missing_b", [])
-        if missing_a:
-            f.write(f"**WARNING:** File A is missing blocks: {', '.join(missing_a)}\n\n")
-        if missing_b:
-            f.write(f"**WARNING:** File B is missing blocks: {', '.join(missing_b)}\n\n")
- 
-        f.write(f"**Overall score:** {res['overall']:.4f}\n\n")
-        for block, data in res["blocks"].items():
-            st = data["stats"]
-            f.write(f"**{block}** — score: {data['line_score']:.4f} | cosine: {data['cosine']:.4f}"
-                    f" | clauses: {st['total']} | matched: {st['matched']}"
-                    f" | unmatched: {st['unmatched']} | perfect: {st['perfect']} | zero: {st['fails']}\n\n")
- 
-        for block, data in res["blocks"].items():
-            f.write(f"\n## Block {block}\n\n")
-            f.write(f"| File A | File B | score |\n|---|---|---:|\n")
-            for a, b, s in sorted(data["rows"], key=lambda x: x[2]):
-                f.write(f"| {md_escape(a)} | {md_escape(b)} | {s:.4f} |\n")
- 
- 
+
+        if meta["missing_a"]:
+            f.write(f"**WARNING:** File A is missing blocks: {', '.join(meta['missing_a'])}\n\n")
+        if meta["missing_b"]:
+            f.write(f"**WARNING:** File B is missing blocks: {', '.join(meta['missing_b'])}\n\n")
+
+        f.write(f"**Overall cosine score:** {meta['overall']:.4f}  ")
+        f.write(f"**Overall euclidean score:** {meta['overall_euclid']:.4f}\n\n")
+
+        for block in COMPARE_BLOCKS:
+            if block not in res:
+                continue
+            d, st = res[block], res[block]["stats"]
+            f.write(f"**{block}** — "
+                    f"clauses A: {len(d['clauses_a'])} / B: {len(d['clauses_b'])} | "
+                    f"match cosine: {d['clause_cosine_score']:.4f} | match euclid: {d['clause_euclid_score']:.4f} | "
+                    f"block cosine: {d['block_cosine_score']:.4f} | block euclid: {d['block_euclid_score']:.4f} | "
+                    f"matched: {st['matched']} | unmatched: {st['unmatched']} | "
+                    f"perfect: {st['perfect']} | zero: {st['fails']}\n\n")
+
+        for block in COMPARE_BLOCKS:
+            if block not in res:
+                continue
+            d = res[block]
+            f.write(f"\n## Block {block} — Clauses\n\n")
+            f.write(f"| # | File A ({len(d['clauses_a'])} clauses) | File B ({len(d['clauses_b'])} clauses) |\n")
+            f.write("|---|---|---|\n")
+            for i in range(max(len(d["clauses_a"]), len(d["clauses_b"]))):
+                ca = md_escape(d["clauses_a"][i]) if i < len(d["clauses_a"]) else ""
+                cb = md_escape(d["clauses_b"][i]) if i < len(d["clauses_b"]) else ""
+                f.write(f"| {i+1} | {ca} | {cb} |\n")
+
+        for block in COMPARE_BLOCKS:
+            if block not in res:
+                continue
+            f.write(f"\n## Block {block} — Matches\n\n")
+            f.write("| File A | File B | cosine | euclidean |\n|---|---|---:|---:|\n")
+            for a, b, s in sorted(res[block]["rows"], key=lambda x: x[2]):
+                f.write(f"| {md_escape(a)} | {md_escape(b)} | {s:.4f} | {euclid_from_cosine(s):.4f} |\n")
+
+
 def score_text(path_a, path_b, preset="biogpt", log_out="block_report.md", plot_out="block_report.png", bool_mode="top"):
     device = pick_device()
     hf_id, pooling = MODEL_PRESETS[preset]

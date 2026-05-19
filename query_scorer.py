@@ -11,7 +11,7 @@ def build_arg_parser():
     ap = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     ap.add_argument("--a", required=True, help="First text file")
     ap.add_argument("--b", required=True, help="Second text file")
-    ap.add_argument("--preset", choices=sorted(MODEL_PRESETS), default="medcpt")
+    ap.add_argument("--preset", choices=sorted(MODEL_PRESETS), default="biogpt")
     ap.add_argument("--bool-mode", choices=BOOL_MODES, default="top",
                     help="Which AND/OR/NOT to strip before matching: "
                          "'top' = top-level only, 'all' = everywhere, 'none' = keep all")
@@ -35,7 +35,7 @@ def main():
         pooling=pooling,
         bool_mode=args.bool_mode,
     )
-
+    print("******************** ===== ", res["A1"].keys())
     print_block_scores(res, args.a, args.b)
     write_block_log(res, args.log_out, path_a=args.a, path_b=args.b,
                     model_name=hf_id, pooling=pooling, device=device)
